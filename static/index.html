@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Roleplay Engine</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <p class="eyebrow">Local Story Engine</p>
+          <div>
+            <h1 id="worldTitle">AI Roleplay Engine</h1>
+            <p id="characterSummary" class="topbar-subtitle">选择世界书和角色卡开始剧情</p>
+          </div>
+        </div>
+
+        <nav class="topbar-actions" aria-label="主操作">
+          <button id="newGameNavBtn" class="nav-button primary-nav" type="button">新游戏</button>
+          <button id="savesNavBtn" class="nav-button" type="button">存档</button>
+          <button id="characterNavBtn" class="nav-button" type="button">角色卡</button>
+          <button id="worldNavBtn" class="nav-button" type="button">世界书</button>
+          <button id="memoryNavBtn" class="nav-button" type="button">记忆</button>
+          <button id="settingsNavBtn" class="nav-button" type="button">设置</button>
+        </nav>
+      </header>
+
+      <section class="main-layout">
+        <aside class="status-rail">
+          <section class="panel goal-panel">
+            <p class="section-kicker">当前目标</p>
+            <p id="stateGoal" class="goal-text">-</p>
+          </section>
+
+          <div id="dynamicStatePanels" class="dynamic-state-panels"></div>
+
+          <section class="panel">
+            <h2>剧情状态</h2>
+            <dl class="state-list">
+              <div>
+                <dt>章节</dt>
+                <dd id="stateChapter">-</dd>
+              </div>
+              <div>
+                <dt>地点</dt>
+                <dd id="stateLocation">-</dd>
+              </div>
+              <div>
+                <dt>时间</dt>
+                <dd id="stateTime">-</dd>
+              </div>
+              <div>
+                <dt>氛围</dt>
+                <dd id="stateMood">-</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="panel">
+            <h2>物品</h2>
+            <div id="inventory" class="chips"></div>
+          </section>
+
+          <section class="panel rpg-panel">
+            <div class="panel-title-row">
+              <h2>角色状态</h2>
+              <span id="statusBadge" class="status-badge">Status</span>
+            </div>
+            <div class="rpg-hero">
+              <div>
+                <p id="rpgClass" class="rpg-class">-</p>
+                <p id="rpgLocation" class="compact-text">-</p>
+              </div>
+              <div class="bp-card">
+                <span>BP</span>
+                <strong id="rpgBp">-</strong>
+              </div>
+            </div>
+            <dl class="rpg-grid">
+              <div>
+                <dt>等级</dt>
+                <dd id="rpgLevel">-</dd>
+              </div>
+              <div>
+                <dt>经验</dt>
+                <dd id="rpgExp">-</dd>
+              </div>
+              <div>
+                <dt>金币</dt>
+                <dd id="rpgGold">-</dd>
+              </div>
+              <div>
+                <dt>威胁</dt>
+                <dd id="rpgThreat">-</dd>
+              </div>
+            </dl>
+          </section>
+
+          <section class="panel">
+            <h2>技能与法术</h2>
+            <div id="skills" class="chips"></div>
+            <div id="spells" class="chips chip-stack"></div>
+            <div id="abilities" class="chips chip-stack"></div>
+          </section>
+
+          <section class="panel">
+            <h2>装备</h2>
+            <div id="equipment" class="chips"></div>
+          </section>
+
+          <section class="panel">
+            <h2>关系</h2>
+            <div id="relationships" class="chips"></div>
+          </section>
+
+          <section class="panel">
+            <h2>目标</h2>
+            <div id="objectives" class="chips"></div>
+          </section>
+
+          <section class="panel">
+            <h2>模型</h2>
+            <p id="modelStatus" class="compact-text">-</p>
+          </section>
+        </aside>
+
+        <section class="play">
+          <div class="stage-header">
+            <p class="section-kicker">剧情舞台</p>
+            <p id="busyStatus" class="busy-status" aria-live="polite"></p>
+          </div>
+
+          <div id="messages" class="messages" aria-live="polite"></div>
+
+          <section class="composer" aria-label="行动区">
+            <div class="composer-inner">
+              <div class="choice-heading">
+                <span>行动选项</span>
+                <div class="choice-tools">
+                  <small>也可以自由输入</small>
+                  <button id="editLastBtn" class="retry-button" type="button">编辑上一轮</button>
+                  <button id="deleteLastBtn" class="retry-button danger-lite" type="button">撤销上一轮</button>
+                  <button id="retryBtn" class="retry-button" type="button">重试上一轮</button>
+                </div>
+              </div>
+              <div id="choices" class="choices"></div>
+              <form id="messageForm" class="input-row">
+                <textarea
+                  id="messageInput"
+                  rows="2"
+                  placeholder="输入你的行动、台词或观察..."
+                  autocomplete="off"
+                ></textarea>
+                <button id="sendBtn" type="submit">发送</button>
+              </form>
+              <p class="input-hint">快捷键：Ctrl / Command + Enter 发送</p>
+            </div>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <div id="drawerOverlay" class="drawer-overlay" hidden></div>
+
+    <aside id="newGameDrawer" class="drawer" aria-hidden="true">
+      <div class="drawer-header">
+        <div>
+          <p class="section-kicker">New Session</p>
+          <h2>开始新游戏</h2>
+        </div>
+        <button class="drawer-close" type="button" data-close-drawer>关闭</button>
+      </div>
+      <div class="drawer-body launcher-panel">
+        <label>
+          世界书
+          <select id="worldSelect"></select>
+        </label>
+        <label>
+          角色卡
+          <select id="characterSelect"></select>
+        </label>
+        <button id="startGameBtn" class="primary-button" type="button">开始新游戏</button>
+      </div>
+    </aside>
+
+    <aside id="savesDrawer" class="drawer" aria-hidden="true">
+      <div class="drawer-header">
+        <div>
+          <p class="section-kicker">Archives</p>
+          <h2>存档</h2>
+        </div>
+        <button class="drawer-close" type="button" data-close-drawer>关闭</button>
+      </div>
+      <div class="drawer-body">
+        <div id="saveList" class="save-list"></div>
+      </div>
+    </aside>
+
+    <aside id="characterDrawer" class="drawer" aria-hidden="true">
+      <div class="drawer-header">
+        <div>
+          <p class="section-kicker">Character Card</p>
+          <h2>角色卡</h2>
+        </div>
+        <button class="drawer-close" type="button" data-close-drawer>关闭</button>
+      </div>
+      <div class="drawer-body editor-panel">
+        <label>
+          名称
+          <input id="characterName" type="text" autocomplete="off" />
+        </label>
+        <label>
+          身份
+          <textarea id="characterRole" rows="3"></textarea>
+        </label>
+        <label>
+          性格
+          <textarea id="characterPersonality" rows="4"></textarea>
+        </label>
+        <label>
+          说话风格
+          <textarea id="characterSpeechStyle" rows="3"></textarea>
+        </label>
+        <label>
+          规则
+          <textarea id="characterRules" rows="6"></textarea>
+        </label>
+        <button id="saveCharacterBtn" class="primary-button" type="button">保存角色卡</button>
+      </div>
+    </aside>
+
+    <aside id="worldDrawer" class="drawer" aria-hidden="true">
+      <div class="drawer-header">
+        <div>
+          <p class="section-kicker">World Book</p>
+          <h2>世界书</h2>
+        </div>
+        <button class="drawer-close" type="button" data-close-drawer>关闭</button>
+      </div>
+      <div class="drawer-body editor-panel">
+        <label>
+          标题
+          <input id="worldBookTitle" type="text" autocomplete="off" />
+        </label>
+        <label>
+          前提
+          <textarea id="worldPremise" rows="5"></textarea>
+        </label>
+        <label>
+          基调
+          <textarea id="worldTone" rows="3"></textarea>
+        </label>
+        <label>
+          事实条目
+          <textarea id="worldFacts" rows="8"></textarea>
+        </label>
+        <button id="saveWorldBtn" class="primary-button" type="button">保存世界书</button>
+      </div>
+    </aside>
+
+    <aside id="memoryDrawer" class="drawer" aria-hidden="true">
+      <div class="drawer-header">
+        <div>
+          <p class="section-kicker">Long Memory</p>
+          <h2>长期记忆</h2>
+        </div>
+        <button class="drawer-close" type="button" data-close-drawer>关闭</button>
+      </div>
+      <div class="drawer-body editor-panel">
+        <label>
+          剧情摘要
+          <textarea id="sessionSummary" rows="16"></textarea>
+        </label>
+        <button id="saveMemoryBtn" class="primary-button" type="button">保存长期记忆</button>
+      </div>
+    </aside>
+
+    <aside id="settingsDrawer" class="drawer" aria-hidden="true">
+      <div class="drawer-header">
+        <div>
+          <p class="section-kicker">Settings</p>
+          <h2>设置</h2>
+        </div>
+        <button class="drawer-close" type="button" data-close-drawer>关闭</button>
+      </div>
+      <div class="drawer-body">
+        <section class="panel">
+          <h2>当前模型</h2>
+          <p id="drawerModelStatus" class="compact-text">-</p>
+        </section>
+      </div>
+    </aside>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
