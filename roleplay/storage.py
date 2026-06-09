@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import uuid
 from typing import Any
@@ -9,7 +10,10 @@ from .config import DB_PATH, DATA_DIR, AppConfig
 from .defaults import DEFAULT_CHARACTER, DEFAULT_STATE, DEFAULT_WORLD
 from .library_import import import_library_files
 from .providers import get_model_metadata
+from .story_response import apply_state_patch_with_schema
 from .utils import deep_merge, now_ms
+
+CHARACTER_ONLY_WORLD_ID = "__character_only__"
 
 
 def init_db() -> None:
@@ -54,6 +58,7 @@ def init_db() -> None:
                 example_dialogue TEXT NOT NULL DEFAULT '',
                 creator_notes TEXT NOT NULL DEFAULT '',
                 tags_json TEXT NOT NULL DEFAULT '[]',
+                card_type TEXT NOT NULL DEFAULT 'npc',
                 rules_json TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
@@ -70,6 +75,9 @@ def init_db() -> None:
                 tone TEXT NOT NULL,
                 facts_json TEXT NOT NULL,
                 ui_schema_json TEXT NOT NULL DEFAULT '{}',
+                initial_state_json TEXT NOT NULL DEFAULT '{}',
+                opening_scene TEXT NOT NULL DEFAULT '',
+                opening_options_json TEXT NOT NULL DEFAULT '[]',
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             )
@@ -124,6 +132,7 @@ def ensure_character_columns(conn: sqlite3.Connection) -> None:
         "example_dialogue": "TEXT NOT NULL DEFAULT ''",
         "creator_notes": "TEXT NOT NULL DEFAULT ''",
         "tags_json": "TEXT NOT NULL DEFAULT '[]'",
+        "card_type": "TEXT NOT NULL DEFAULT 'npc'",
     }.items():
         if column_name not in columns:
             conn.execute(f"ALTER TABLE character_cards ADD COLUMN {column_name} {definition}")
@@ -133,6 +142,12 @@ def ensure_world_columns(conn: sqlite3.Connection) -> None:
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(world_books)").fetchall()}
     if "ui_schema_json" not in columns:
         conn.execute("ALTER TABLE world_books ADD COLUMN ui_schema_json TEXT NOT NULL DEFAULT '{}'")
+    if "initial_state_json" not in columns:
+        conn.execute("ALTER TABLE world_books ADD COLUMN initial_state_json TEXT NOT NULL DEFAULT '{}'")
+    if "opening_scene" not in columns:
+        conn.execute("ALTER TABLE world_books ADD COLUMN opening_scene TEXT NOT NULL DEFAULT ''")
+    if "opening_options_json" not in columns:
+        conn.execute("ALTER TABLE world_books ADD COLUMN opening_options_json TEXT NOT NULL DEFAULT '[]'")
 
 
 def ensure_session_bindings(conn: sqlite3.Connection) -> None:
@@ -181,9 +196,10 @@ def ensure_editor_defaults(conn: sqlite3.Connection) -> None:
         conn.execute(
             """
             INSERT INTO world_books (
-                id, title, premise, tone, facts_json, ui_schema_json, created_at, updated_at
+                id, title, premise, tone, facts_json, ui_schema_json,
+                initial_state_json, opening_scene, opening_options_json, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 world_id,
@@ -192,6 +208,9 @@ def ensure_editor_defaults(conn: sqlite3.Connection) -> None:
                 DEFAULT_WORLD["tone"],
                 json.dumps(DEFAULT_WORLD["facts"], ensure_ascii=False),
                 json.dumps(DEFAULT_WORLD.get("uiSchema", {}), ensure_ascii=False),
+                json.dumps(DEFAULT_WORLD.get("initialState", {}), ensure_ascii=False),
+                str(DEFAULT_WORLD.get("openingScene") or ""),
+                json.dumps(DEFAULT_WORLD.get("openingOptions", []), ensure_ascii=False),
                 timestamp,
                 timestamp,
             ),
@@ -242,8 +261,18 @@ def normalize_character_card(data: dict[str, Any]) -> dict[str, Any]:
         "exampleDialogue": str(data.get("exampleDialogue") or data.get("example_dialogue") or "").strip(),
         "creatorNotes": str(data.get("creatorNotes") or data.get("creator_notes") or "").strip(),
         "tags": split_lines(data.get("tags")),
+        "cardType": normalize_card_type(data.get("cardType") or data.get("card_type")),
         "rules": split_lines(data.get("rules")),
     }
+
+
+def normalize_card_type(value: Any) -> str:
+    card_type = str(value or "").strip().lower()
+    if card_type in {"player", "protagonist", "pc", "user"}:
+        return "player"
+    if card_type in {"npc", "character", "assistant", "ai"}:
+        return "npc"
+    return "npc"
 
 
 def normalize_world_book(data: dict[str, Any]) -> dict[str, Any]:
@@ -255,7 +284,46 @@ def normalize_world_book(data: dict[str, Any]) -> dict[str, Any]:
         "facts": facts,
         "entries": normalize_world_entries(data.get("entries"), facts),
         "uiSchema": data.get("uiSchema") if isinstance(data.get("uiSchema"), dict) else {},
+        "initialState": data.get("initialState") if isinstance(data.get("initialState"), dict) else {},
+        "openingScene": str(data.get("openingScene") or "").strip(),
+        "openingOptions": normalize_opening_options(data.get("openingOptions")),
     }
+
+
+def normalize_opening_options(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+
+    options = []
+    seen_ids: set[str] = set()
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        prompt = str(item.get("prompt") or "").strip()
+        if not title or not prompt:
+            continue
+        option_id = str(item.get("id") or "").strip() or slugify_opening_id(title, index)
+        if option_id in seen_ids:
+            option_id = f"{option_id}-{index + 1}"
+        seen_ids.add(option_id)
+        patch = item.get("initialStatePatch")
+        options.append(
+            {
+                "id": option_id,
+                "title": title,
+                "description": str(item.get("description") or "").strip(),
+                "prompt": prompt,
+                "initialStatePatch": patch if isinstance(patch, dict) else {},
+                "tags": split_lines(item.get("tags")),
+            }
+        )
+    return options
+
+
+def slugify_opening_id(title: str, index: int) -> str:
+    ascii_slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    return ascii_slug or f"opening-{index + 1}"
 
 
 def normalize_world_entries(value: Any, fallback_facts: list[str]) -> list[dict[str, Any]]:
@@ -303,6 +371,7 @@ def row_to_character_card(row: sqlite3.Row) -> dict[str, Any]:
         "exampleDialogue": row["example_dialogue"],
         "creatorNotes": row["creator_notes"],
         "tags": json.loads(row["tags_json"]),
+        "cardType": row["card_type"] if "card_type" in row.keys() else "npc",
         "rules": json.loads(row["rules_json"]),
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
@@ -320,9 +389,32 @@ def row_to_world_book(row: sqlite3.Row) -> dict[str, Any]:
         "tone": row["tone"],
         "facts": json.loads(row["facts_json"]),
         "uiSchema": json.loads(row["ui_schema_json"]) if "ui_schema_json" in row.keys() else {},
+        "initialState": json.loads(row["initial_state_json"]) if "initial_state_json" in row.keys() else {},
+        "openingScene": row["opening_scene"] if "opening_scene" in row.keys() else "",
+        "openingOptions": (
+            json.loads(row["opening_options_json"]) if "opening_options_json" in row.keys() else []
+        ),
         "entries": entries,
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
+    }
+
+
+def character_only_world(character: dict[str, Any] | None = None) -> dict[str, Any]:
+    character_name = str((character or {}).get("name") or DEFAULT_CHARACTER["name"]).strip()
+    return {
+        "id": CHARACTER_ONLY_WORLD_ID,
+        "title": "仅角色卡模式",
+        "premise": f"本局只加载角色卡「{character_name}」，不加载任何世界书条目、世界书开场或世界书状态 schema。",
+        "tone": "由角色卡决定",
+        "facts": [],
+        "uiSchema": {},
+        "initialState": {},
+        "openingScene": "",
+        "openingOptions": [],
+        "entries": [],
+        "createdAt": 0,
+        "updatedAt": 0,
     }
 
 
@@ -428,13 +520,33 @@ def get_editor_payload() -> dict[str, Any]:
 
 def save_active_character_card(data: dict[str, Any]) -> dict[str, Any]:
     init_db()
-    card = normalize_character_card(data)
     timestamp = now_ms()
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         card_id = str(data.get("id") or get_setting(conn, "active_character_id") or uuid.uuid4())
-        exists = conn.execute("SELECT id FROM character_cards WHERE id = ?", (card_id,)).fetchone()
-        if exists:
+        existing_row = conn.execute("SELECT * FROM character_cards WHERE id = ?", (card_id,)).fetchone()
+        merged_data = dict(data)
+        if existing_row:
+            existing_card = row_to_character_card(existing_row)
+            preserve_keys = [
+                "name",
+                "role",
+                "personality",
+                "speechStyle",
+                "scenario",
+                "firstMessage",
+                "exampleDialogue",
+                "creatorNotes",
+                "tags",
+                "cardType",
+                "rules",
+            ]
+            for key in preserve_keys:
+                if key not in merged_data:
+                    merged_data[key] = existing_card.get(key)
+
+        card = normalize_character_card(merged_data)
+        if existing_row:
             conn.execute(
                 """
                 UPDATE character_cards
@@ -448,6 +560,7 @@ def save_active_character_card(data: dict[str, Any]) -> dict[str, Any]:
                     example_dialogue = ?,
                     creator_notes = ?,
                     tags_json = ?,
+                    card_type = ?,
                     rules_json = ?,
                     updated_at = ?
                 WHERE id = ?
@@ -462,6 +575,7 @@ def save_active_character_card(data: dict[str, Any]) -> dict[str, Any]:
                     card["exampleDialogue"],
                     card["creatorNotes"],
                     json.dumps(card["tags"], ensure_ascii=False),
+                    card["cardType"],
                     json.dumps(card["rules"], ensure_ascii=False),
                     timestamp,
                     card_id,
@@ -472,9 +586,9 @@ def save_active_character_card(data: dict[str, Any]) -> dict[str, Any]:
                 """
                 INSERT INTO character_cards (
                     id, name, role, personality, speech_style, scenario, first_message,
-                    example_dialogue, creator_notes, tags_json, rules_json, created_at, updated_at
+                    example_dialogue, creator_notes, tags_json, card_type, rules_json, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     card_id,
@@ -487,6 +601,7 @@ def save_active_character_card(data: dict[str, Any]) -> dict[str, Any]:
                     card["exampleDialogue"],
                     card["creatorNotes"],
                     json.dumps(card["tags"], ensure_ascii=False),
+                    card["cardType"],
                     json.dumps(card["rules"], ensure_ascii=False),
                     timestamp,
                     timestamp,
@@ -500,17 +615,38 @@ def save_active_character_card(data: dict[str, Any]) -> dict[str, Any]:
 
 def save_active_world_book(data: dict[str, Any]) -> dict[str, Any]:
     init_db()
-    world = normalize_world_book(data)
     timestamp = now_ms()
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         world_id = str(data.get("id") or get_setting(conn, "active_world_id") or uuid.uuid4())
-        exists = conn.execute("SELECT id FROM world_books WHERE id = ?", (world_id,)).fetchone()
-        if exists:
+        existing_row = conn.execute("SELECT * FROM world_books WHERE id = ?", (world_id,)).fetchone()
+        merged_data = dict(data)
+        if existing_row:
+            existing_world = row_to_world_book(existing_row)
+            existing_world["entries"] = get_world_entries_in_conn(conn, existing_world["id"])
+            preserve_keys = [
+                "title",
+                "premise",
+                "tone",
+                "facts",
+                "entries",
+                "uiSchema",
+                "initialState",
+                "openingScene",
+                "openingOptions",
+            ]
+            for key in preserve_keys:
+                if key not in merged_data:
+                    merged_data[key] = existing_world.get(key)
+
+        world = normalize_world_book(merged_data)
+        if existing_row:
             conn.execute(
                 """
                 UPDATE world_books
-                SET title = ?, premise = ?, tone = ?, facts_json = ?, ui_schema_json = ?, updated_at = ?
+                SET title = ?, premise = ?, tone = ?, facts_json = ?,
+                    ui_schema_json = ?, initial_state_json = ?, opening_scene = ?,
+                    opening_options_json = ?, updated_at = ?
                 WHERE id = ?
                 """,
                 (
@@ -519,6 +655,9 @@ def save_active_world_book(data: dict[str, Any]) -> dict[str, Any]:
                     world["tone"],
                     json.dumps(world["facts"], ensure_ascii=False),
                     json.dumps(world["uiSchema"], ensure_ascii=False),
+                    json.dumps(world["initialState"], ensure_ascii=False),
+                    world["openingScene"],
+                    json.dumps(world["openingOptions"], ensure_ascii=False),
                     timestamp,
                     world_id,
                 ),
@@ -527,9 +666,10 @@ def save_active_world_book(data: dict[str, Any]) -> dict[str, Any]:
             conn.execute(
                 """
                 INSERT INTO world_books (
-                    id, title, premise, tone, facts_json, ui_schema_json, created_at, updated_at
+                    id, title, premise, tone, facts_json, ui_schema_json,
+                    initial_state_json, opening_scene, opening_options_json, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     world_id,
@@ -538,6 +678,9 @@ def save_active_world_book(data: dict[str, Any]) -> dict[str, Any]:
                     world["tone"],
                     json.dumps(world["facts"], ensure_ascii=False),
                     json.dumps(world["uiSchema"], ensure_ascii=False),
+                    json.dumps(world["initialState"], ensure_ascii=False),
+                    world["openingScene"],
+                    json.dumps(world["openingOptions"], ensure_ascii=False),
                     timestamp,
                     timestamp,
                 ),
@@ -868,6 +1011,8 @@ def create_session(
     config: AppConfig,
     character_id: str | None = None,
     world_id: str | None = None,
+    initial_state_patch: dict[str, Any] | None = None,
+    character_only: bool = False,
 ) -> dict[str, Any]:
     init_db()
     session_id = str(uuid.uuid4())
@@ -875,8 +1020,16 @@ def create_session(
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         character = get_character_card_by_id(conn, character_id) or get_active_character_card_in_conn(conn)
-        world = get_world_book_by_id(conn, world_id) or get_active_world_book_in_conn(conn)
+        world = character_only_world(character) if character_only else (
+            get_world_book_by_id(conn, world_id) or get_active_world_book_in_conn(conn)
+        )
         initial_state = build_initial_state(world, character)
+        if isinstance(initial_state_patch, dict) and initial_state_patch:
+            initial_state = apply_state_patch_with_schema(
+                initial_state,
+                initial_state_patch,
+                world.get("uiSchema"),
+            )
         conn.execute(
             """
             INSERT INTO sessions (
@@ -891,11 +1044,12 @@ def create_session(
                 timestamp,
                 timestamp,
                 character["id"],
-                world["id"],
+                CHARACTER_ONLY_WORLD_ID if character_only else world["id"],
             ),
         )
         set_setting(conn, "active_character_id", character["id"])
-        set_setting(conn, "active_world_id", world["id"])
+        if not character_only:
+            set_setting(conn, "active_world_id", world["id"])
         conn.commit()
     return get_session(config, session_id)
 
@@ -985,7 +1139,10 @@ def get_session(config: AppConfig, session_id: str | None = None) -> dict[str, A
             get_character_card_by_id(conn, session["character_card_id"])
             or get_active_character_card_in_conn(conn)
         )
-        world = get_world_book_by_id(conn, session["world_book_id"]) or get_active_world_book_in_conn(conn)
+        if session["world_book_id"] == CHARACTER_ONLY_WORLD_ID:
+            world = character_only_world(character)
+        else:
+            world = get_world_book_by_id(conn, session["world_book_id"]) or get_active_world_book_in_conn(conn)
 
     return {
         "id": session["id"],

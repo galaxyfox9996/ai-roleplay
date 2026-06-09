@@ -4,11 +4,28 @@ const state = {
   sessions: [],
   selectedWorldId: "",
   selectedCharacterId: "",
+  worldMode: "worldBook",
+  openingMode: "default",
+  openingOptionId: "",
+  customOpeningText: "",
+  mobileView: "story",
+  view: "launcher",
   busy: false,
-  activeDrawer: null,
 };
 
 const els = {
+  shell: document.querySelector(".shell"),
+  homeBtn: document.querySelector("#homeBtn"),
+  homeFromGameBtn: document.querySelector("#homeFromGameBtn"),
+  launcherStartBtn: document.querySelector("#launcherStartBtn"),
+  launcherSavesBtn: document.querySelector("#launcherSavesBtn"),
+  launcherAllSavesBtn: document.querySelector("#launcherAllSavesBtn"),
+  launcherCharactersBtn: document.querySelector("#launcherCharactersBtn"),
+  launcherWorldsBtn: document.querySelector("#launcherWorldsBtn"),
+  launcherSettingsBtn: document.querySelector("#launcherSettingsBtn"),
+  launcherModelStatus: document.querySelector("#launcherModelStatus"),
+  recentSaves: document.querySelector("#recentSaves"),
+  worldStep: document.querySelector("#worldStep"),
   messages: document.querySelector("#messages"),
   choices: document.querySelector("#choices"),
   form: document.querySelector("#messageForm"),
@@ -44,8 +61,16 @@ const els = {
   characterSummary: document.querySelector("#characterSummary"),
   busyStatus: document.querySelector("#busyStatus"),
   worldSelect: document.querySelector("#worldSelect"),
+  characterOnlyMode: document.querySelector("#characterOnlyMode"),
   characterSelect: document.querySelector("#characterSelect"),
   startGameBtn: document.querySelector("#startGameBtn"),
+  openingModeRadios: Array.from(document.querySelectorAll('input[name="openingMode"]')),
+  openingModeOption: document.querySelector("#openingModeOption"),
+  openingOptionsPanel: document.querySelector("#openingOptionsPanel"),
+  customOpeningPanel: document.querySelector("#customOpeningPanel"),
+  customOpeningText: document.querySelector("#customOpeningText"),
+  launchSummary: document.querySelector("#launchSummary"),
+  mobileTabs: Array.from(document.querySelectorAll("[data-mobile-view]")),
   saveList: document.querySelector("#saveList"),
   saveCharacterBtn: document.querySelector("#saveCharacterBtn"),
   saveWorldBtn: document.querySelector("#saveWorldBtn"),
@@ -102,10 +127,12 @@ function setBusy(nextBusy) {
   state.busy = nextBusy;
   els.sendBtn.disabled = nextBusy;
   els.input.disabled = nextBusy;
+  if (els.characterOnlyMode) els.characterOnlyMode.disabled = nextBusy;
   els.retryBtn.disabled = nextBusy;
   els.editLastBtn.disabled = nextBusy;
   els.deleteLastBtn.disabled = nextBusy;
   els.startGameBtn.disabled = nextBusy;
+  if (els.customOpeningText) els.customOpeningText.disabled = nextBusy;
   els.saveCharacterBtn.disabled = nextBusy;
   els.saveWorldBtn.disabled = nextBusy;
   els.saveMemoryBtn.disabled = nextBusy;
@@ -176,25 +203,52 @@ function fillSelect(select, items, valueKey, labelKey, selectedId) {
   }
 }
 
-function openDrawer(name) {
-  state.activeDrawer = name;
+const viewForDrawer = {
+  newGame: "newGame",
+  saves: "saves",
+  character: "characters",
+  world: "worlds",
+  memory: "memory",
+  settings: "settings",
+};
+
+function setView(view) {
+  const nextView = view || "launcher";
+  state.view = nextView;
+  if (els.shell) {
+    els.shell.dataset.view = nextView;
+  }
   Object.entries(els.drawers).forEach(([drawerName, drawer]) => {
-    const isOpen = drawerName === name;
-    drawer.classList.toggle("open", isOpen);
-    drawer.setAttribute("aria-hidden", String(!isOpen));
+    if (!drawer) return;
+    const routeName = viewForDrawer[drawerName] || drawerName;
+    drawer.setAttribute("aria-hidden", String(routeName !== nextView));
   });
-  els.drawerOverlay.hidden = false;
-  els.drawerOverlay.classList.add("open");
+  Object.entries(els.nav).forEach(([navName, button]) => {
+    if (!button) return;
+    const routeName = viewForDrawer[navName] || navName;
+    button.classList.toggle("active", routeName === nextView);
+  });
+  if (nextView === "game") {
+    setMobileView(state.mobileView || "story");
+  }
+}
+
+function openDrawer(name) {
+  setView(viewForDrawer[name] || name || "launcher");
 }
 
 function closeDrawer() {
-  state.activeDrawer = null;
-  Object.values(els.drawers).forEach((drawer) => {
-    drawer.classList.remove("open");
-    drawer.setAttribute("aria-hidden", "true");
+  setView("launcher");
+}
+
+function setMobileView(view) {
+  state.mobileView = view;
+  if (els.shell) {
+    els.shell.dataset.mobileView = view;
+  }
+  els.mobileTabs.forEach((button) => {
+    button.classList.toggle("active", button.dataset.mobileView === view);
   });
-  els.drawerOverlay.classList.remove("open");
-  els.drawerOverlay.hidden = true;
 }
 
 function renderNewGamePanel() {
@@ -202,6 +256,94 @@ function renderNewGamePanel() {
   const characters = state.editor?.characters || [];
   fillSelect(els.worldSelect, worlds, "id", "title", state.selectedWorldId);
   fillSelect(els.characterSelect, characters, "id", "name", state.selectedCharacterId);
+  if (els.characterOnlyMode) {
+    els.characterOnlyMode.checked = state.worldMode === "characterOnly";
+  }
+  if (els.worldSelect) {
+    els.worldSelect.disabled = state.busy || state.worldMode === "characterOnly";
+  }
+  if (els.worldStep) {
+    els.worldStep.hidden = state.worldMode === "characterOnly";
+  }
+  renderOpeningControls();
+}
+
+function renderOpeningControls() {
+  const world = selectedWorld();
+  const characterOnly = state.worldMode === "characterOnly";
+  const options = characterOnly ? [] : (Array.isArray(world.openingOptions) ? world.openingOptions : []);
+  if (state.openingMode === "option" && !options.length) {
+    state.openingMode = "default";
+    state.openingOptionId = "";
+  }
+  if (state.openingMode === "option" && !options.some((item) => item.id === state.openingOptionId)) {
+    state.openingOptionId = options[0]?.id || "";
+  }
+
+  els.openingModeRadios.forEach((radio) => {
+    radio.checked = radio.value === state.openingMode;
+  });
+  if (els.openingModeOption) {
+    els.openingModeOption.disabled = characterOnly || !options.length || state.busy;
+  }
+
+  if (els.openingOptionsPanel) {
+    els.openingOptionsPanel.hidden = state.openingMode !== "option";
+    if (characterOnly) {
+      els.openingOptionsPanel.innerHTML = `<p class="opening-empty">仅角色卡模式不会加载世界书预设开局。</p>`;
+    } else if (!options.length) {
+      els.openingOptionsPanel.innerHTML = `<p class="opening-empty">当前世界书没有预设开局。</p>`;
+    } else {
+      els.openingOptionsPanel.innerHTML = options.map((option) => {
+        const active = option.id === state.openingOptionId ? " active" : "";
+        const tags = Array.isArray(option.tags) && option.tags.length
+          ? `<span class="opening-tags">${option.tags.map(escapeHtml).join(" · ")}</span>`
+          : "";
+        return `
+          <button class="opening-option-card${active}" type="button" data-opening-option-id="${escapeHtml(option.id)}">
+            <strong>${escapeHtml(option.title)}</strong>
+            <span>${escapeHtml(option.description || "使用该预设作为第一幕起点。")}</span>
+            ${tags}
+          </button>
+        `;
+      }).join("");
+      els.openingOptionsPanel.querySelectorAll("[data-opening-option-id]").forEach((button) => {
+        button.addEventListener("click", () => {
+          state.openingMode = "option";
+          state.openingOptionId = button.dataset.openingOptionId || "";
+          renderOpeningControls();
+        });
+      });
+    }
+  }
+
+  if (els.customOpeningPanel) {
+    els.customOpeningPanel.hidden = state.openingMode !== "custom";
+  }
+  if (els.customOpeningText && els.customOpeningText.value !== state.customOpeningText) {
+    els.customOpeningText.value = state.customOpeningText;
+  }
+  renderLaunchSummary();
+}
+
+function renderLaunchSummary() {
+  if (!els.launchSummary) return;
+  const world = selectedWorld();
+  const character = selectedCharacter();
+  const option = (world.openingOptions || []).find((item) => item.id === state.openingOptionId);
+  const worldText = state.worldMode === "characterOnly"
+    ? "仅角色卡模式，不加载世界书"
+    : `世界书：${world.title || "-"}`;
+  const modeLabels = {
+    default: "默认开局",
+    option: `预设开局：${option?.title || "未选择"}`,
+    custom: state.customOpeningText.trim() ? "自定义开局：已填写" : "自定义开局：等待输入",
+  };
+  els.launchSummary.innerHTML = `
+    <p>${escapeHtml(worldText)}</p>
+    <p>角色卡：${escapeHtml(character.name || "-")}</p>
+    <p>开局方式：${escapeHtml(modeLabels[state.openingMode] || "默认开局")}</p>
+  `;
 }
 
 function renderSaveDrawer() {
@@ -234,6 +376,100 @@ function renderSaveDrawer() {
     item.appendChild(button);
     item.appendChild(deleteButton);
     els.saveList.appendChild(item);
+  });
+}
+
+function renderLaunchSummary() {
+  if (!els.launchSummary) return;
+  const world = selectedWorld();
+  const character = selectedCharacter();
+  const option = (world.openingOptions || []).find((item) => item.id === state.openingOptionId);
+  const worldText = state.worldMode === "characterOnly"
+    ? "模式：仅角色卡，不加载世界书"
+    : `世界书：${world.title || "-"}`;
+  const customText = state.customOpeningText.trim();
+  const customSummary = customText ? customText.slice(0, 90) : "尚未填写";
+  const modeLabels = {
+    default: "默认开局",
+    option: `预设开局：${option?.title || "未选择"}`,
+    custom: `自定义开局：${customSummary}${customText.length > 90 ? "..." : ""}`,
+  };
+  els.launchSummary.innerHTML = `
+    <p>${escapeHtml(worldText)}</p>
+    <p>角色卡：${escapeHtml(character.name || "-")}</p>
+    <p>开局方式：${escapeHtml(modeLabels[state.openingMode] || "默认开局")}</p>
+  `;
+}
+
+function renderSaveDrawer() {
+  if (!els.saveList) return;
+  els.saveList.innerHTML = "";
+  if (!state.sessions.length) {
+    els.saveList.innerHTML = `<div class="save-empty">暂无存档。点击“开始新游戏”创建第一段剧情。</div>`;
+    return;
+  }
+
+  state.sessions.forEach((save) => {
+    const item = document.createElement("div");
+    item.className = `save-row${save.id === state.session?.id ? " active" : ""}`;
+
+    const button = document.createElement("button");
+    button.className = "save-item";
+    button.type = "button";
+    button.innerHTML = `
+      <span class="save-title">${escapeHtml(save.worldTitle || save.title || "未命名存档")}</span>
+      <span class="save-meta">${escapeHtml(save.characterName || "未命名角色")} · ${save.messageCount || 0} 条消息 · ${formatTime(save.updatedAt)}</span>
+    `;
+    button.addEventListener("click", () => continueSession(save.id));
+
+    const deleteButton = document.createElement("button");
+    deleteButton.className = "save-delete";
+    deleteButton.type = "button";
+    deleteButton.title = "删除存档";
+    deleteButton.textContent = "删除";
+    deleteButton.addEventListener("click", () => deleteSession(save.id, save.worldTitle || save.title));
+
+    item.appendChild(button);
+    item.appendChild(deleteButton);
+    els.saveList.appendChild(item);
+  });
+}
+
+function renderLauncher() {
+  if (!els.recentSaves) return;
+  const modelText = state.session
+    ? `${state.session.model.provider}: ${state.session.model.name}`
+    : "尚未进入游戏，开始或继续存档后会显示会话模型。";
+  if (els.launcherModelStatus) {
+    els.launcherModelStatus.textContent = modelText;
+  }
+
+  const recent = [...state.sessions]
+    .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))
+    .slice(0, 3);
+  els.recentSaves.innerHTML = "";
+  if (!recent.length) {
+    els.recentSaves.innerHTML = `<div class="save-empty">还没有存档。先开始一局新游戏吧。</div>`;
+    return;
+  }
+
+  recent.forEach((save) => {
+    const card = document.createElement("article");
+    card.className = "recent-save-card";
+    card.innerHTML = `
+      <div>
+        <strong>${escapeHtml(save.worldTitle || save.title || "未命名存档")}</strong>
+        <span>${escapeHtml(save.characterName || "未命名角色")} · ${save.messageCount || 0} 条消息</span>
+        <small>${formatTime(save.updatedAt)}</small>
+      </div>
+      <button class="text-button" type="button">继续</button>
+    `;
+    card.querySelector("button").addEventListener("click", (event) => {
+      event.stopPropagation();
+      continueSession(save.id);
+    });
+    card.addEventListener("click", () => continueSession(save.id));
+    els.recentSaves.appendChild(card);
   });
 }
 
@@ -451,12 +687,18 @@ function renderDynamicStatePanels() {
 
   els.dynamicStatePanels.hidden = false;
   const sections = Array.isArray(uiSchema.sections) ? uiSchema.sections : [];
-  els.dynamicStatePanels.innerHTML = sections
+  const battleActive = isBattleActive(storyState);
+  const orderedSections = [...sections].sort((a, b) => {
+    if (!battleActive) return 0;
+    return Number(isCombatSection(b)) - Number(isCombatSection(a));
+  });
+  els.dynamicStatePanels.innerHTML = orderedSections
     .map((section) => {
       const fields = Array.isArray(section.fields) ? section.fields.filter((field) => field?.key) : [];
       if (!fields.length) return "";
+      const combatClass = battleActive && isCombatSection(section) ? " combat-active" : "";
       return `
-        <section class="panel dynamic-panel">
+        <section class="panel dynamic-panel${combatClass}">
           <div class="panel-title-row">
             <h2>${escapeHtml(section.title || uiSchema.title || "状态")}</h2>
           </div>
@@ -467,6 +709,20 @@ function renderDynamicStatePanels() {
       `;
     })
     .join("");
+}
+
+function isBattleActive(storyState) {
+  const enemy = String(storyState.enemy || storyState.Enemy || "").trim();
+  const enemyHp = Number(storyState.enemyHp || storyState["Enemy HP"] || 0);
+  const battleRound = Number(storyState.battleRound || storyState.Round || 0);
+  return (enemy && enemy !== "无" && enemy !== "-") || enemyHp > 0 || battleRound > 0;
+}
+
+function isCombatSection(section) {
+  const title = String(section?.title || "").toLowerCase();
+  const fields = Array.isArray(section?.fields) ? section.fields : [];
+  const fieldText = fields.map((field) => `${field.key || ""} ${field.label || ""}`).join(" ").toLowerCase();
+  return /战斗|敌人|回合|combat|enemy|battle|hp|mp|体力/.test(`${title} ${fieldText}`);
 }
 
 function setFallbackPanelsVisible(visible) {
@@ -525,7 +781,16 @@ function renderChoices() {
     { id: "act", text: "主动寻找第一个可以推进剧情的线索", type: "action" },
   ];
 
-  choices.slice(0, 3).forEach((choice, index) => {
+  const fallbackChoices = [
+    { id: "start", text: "观察周围环境，确认自己身在何处。", type: "observe" },
+    { id: "ask", text: "询问身边角色接下来应该怎么做。", type: "dialogue" },
+    { id: "act", text: "主动寻找第一个可以推进剧情的线索。", type: "action" },
+  ];
+  const normalizedChoices = Array.isArray(choices) && choices.some((choice) => choice?.text)
+    ? choices.filter((choice) => choice?.text)
+    : fallbackChoices;
+
+  normalizedChoices.slice(0, 3).forEach((choice, index) => {
     const button = document.createElement("button");
     button.className = `choice-button ${choice.type || "action"}`;
     button.type = "button";
@@ -608,8 +873,11 @@ function renderMessages() {
 }
 
 function renderAll() {
+  setView(state.view);
+  setMobileView(state.mobileView);
   renderNewGamePanel();
   renderSaveDrawer();
+  renderLauncher();
   renderState();
   renderRpgState();
   renderDynamicStatePanels();
@@ -653,11 +921,15 @@ async function startGame() {
       body: JSON.stringify({
         worldId: els.worldSelect.value,
         characterId: els.characterSelect.value,
+        worldMode: state.worldMode,
+        openingMode: state.openingMode,
+        openingOptionId: state.openingOptionId,
+        customOpeningText: state.customOpeningText,
       }),
     });
     state.session = data.session;
     await refreshData(data.session.id);
-    closeDrawer();
+    setView("game");
   } catch (error) {
     window.alert(error.message);
   } finally {
@@ -670,7 +942,7 @@ async function continueSession(sessionId) {
   setBusy(true);
   try {
     await refreshData(sessionId);
-    closeDrawer();
+    setView("game");
   } catch (error) {
     window.alert(error.message);
   } finally {
@@ -898,14 +1170,43 @@ els.input.addEventListener("keydown", (event) => {
 
 els.worldSelect.addEventListener("change", () => {
   state.selectedWorldId = els.worldSelect.value;
+  state.openingOptionId = "";
+  renderNewGamePanel();
   renderEditor();
   renderMessages();
+});
+
+els.characterOnlyMode?.addEventListener("change", () => {
+  state.worldMode = els.characterOnlyMode.checked ? "characterOnly" : "worldBook";
+  state.openingOptionId = "";
+  if (state.worldMode === "characterOnly" && state.openingMode === "option") {
+    state.openingMode = "default";
+  }
+  renderNewGamePanel();
 });
 
 els.characterSelect.addEventListener("change", () => {
   state.selectedCharacterId = els.characterSelect.value;
   renderEditor();
   renderMessages();
+});
+
+els.openingModeRadios.forEach((radio) => {
+  radio.addEventListener("change", () => {
+    state.openingMode = radio.value;
+    renderOpeningControls();
+  });
+});
+
+els.customOpeningText?.addEventListener("input", () => {
+  state.customOpeningText = els.customOpeningText.value;
+  renderLaunchSummary();
+});
+
+els.mobileTabs.forEach((button) => {
+  button.addEventListener("click", () => {
+    setMobileView(button.dataset.mobileView || "story");
+  });
 });
 
 els.startGameBtn.addEventListener("click", startGame);
@@ -915,13 +1216,21 @@ els.deleteLastBtn.addEventListener("click", deleteLastTurn);
 els.saveCharacterBtn.addEventListener("click", saveCharacter);
 els.saveWorldBtn.addEventListener("click", saveWorld);
 els.saveMemoryBtn.addEventListener("click", saveMemory);
-els.nav.newGame.addEventListener("click", () => openDrawer("newGame"));
-els.nav.saves.addEventListener("click", () => openDrawer("saves"));
-els.nav.character.addEventListener("click", () => openDrawer("character"));
-els.nav.world.addEventListener("click", () => openDrawer("world"));
-els.nav.memory.addEventListener("click", () => openDrawer("memory"));
-els.nav.settings.addEventListener("click", () => openDrawer("settings"));
-els.drawerOverlay.addEventListener("click", closeDrawer);
+els.homeBtn?.addEventListener("click", () => setView("launcher"));
+els.homeFromGameBtn?.addEventListener("click", () => setView("launcher"));
+els.launcherStartBtn?.addEventListener("click", () => setView("newGame"));
+els.launcherSavesBtn?.addEventListener("click", () => setView("saves"));
+els.launcherAllSavesBtn?.addEventListener("click", () => setView("saves"));
+els.launcherCharactersBtn?.addEventListener("click", () => setView("characters"));
+els.launcherWorldsBtn?.addEventListener("click", () => setView("worlds"));
+els.launcherSettingsBtn?.addEventListener("click", () => setView("settings"));
+els.nav.newGame.addEventListener("click", () => setView("newGame"));
+els.nav.saves.addEventListener("click", () => setView("saves"));
+els.nav.character.addEventListener("click", () => setView("characters"));
+els.nav.world.addEventListener("click", () => setView("worlds"));
+els.nav.memory.addEventListener("click", () => setView("memory"));
+els.nav.settings.addEventListener("click", () => setView("settings"));
+els.drawerOverlay?.addEventListener("click", closeDrawer);
 document.querySelectorAll("[data-close-drawer]").forEach((button) => {
   button.addEventListener("click", closeDrawer);
 });

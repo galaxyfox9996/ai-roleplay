@@ -161,14 +161,64 @@ def apply_state_patch_with_schema(
     normalized_patch = normalize_state_patch_with_schema(patch, ui_schema)
     for key, value in normalized_patch.items():
         field = fields.get(key, {})
-        if field.get("merge") == "appendUnique":
+        policy = field_update_policy(field)
+        if policy == "appendUnique":
             existing = merged.get(key, [])
             merged[key] = append_unique(existing, value)
-        elif isinstance(value, dict) and isinstance(merged.get(key), dict):
+        elif policy == "mergeObject" and isinstance(value, dict) and isinstance(merged.get(key), dict):
             merged[key] = merge_dicts(merged[key], value)
+        elif policy == "delta":
+            merged[key] = apply_delta(merged.get(key), value, field)
+        elif policy == "clamp":
+            merged[key] = clamp_schema_number(value, field)
         else:
-            merged[key] = value
+            merged[key] = clamp_schema_number(value, field) if should_clamp_field(field) else value
     return merged
+
+
+def field_update_policy(field: dict[str, Any]) -> str:
+    policy = str(field.get("updatePolicy") or field.get("policy") or "").strip()
+    if policy:
+        return policy
+    if field.get("merge") == "appendUnique":
+        return "appendUnique"
+    if field.get("merge") == "mergeObject":
+        return "mergeObject"
+    return "replace"
+
+
+def should_clamp_field(field: dict[str, Any]) -> bool:
+    field_type = str(field.get("type") or "").lower()
+    return field_type in {"number", "meter"} and ("min" in field or "max" in field)
+
+
+def clamp_schema_number(value: Any, field: dict[str, Any]) -> Any:
+    parsed = value if isinstance(value, (int, float)) else parse_status_number(str(value))
+    if not isinstance(parsed, (int, float)):
+        return value
+    minimum = field.get("min")
+    maximum = field.get("max")
+    result = parsed
+    if isinstance(minimum, (int, float)):
+        result = max(minimum, result)
+    if isinstance(maximum, (int, float)):
+        result = min(maximum, result)
+    return result
+
+
+def apply_delta(existing: Any, incoming: Any, field: dict[str, Any]) -> Any:
+    current = existing if isinstance(existing, (int, float)) else parse_status_number(str(existing or 0))
+    if not isinstance(current, (int, float)):
+        current = 0
+    if isinstance(incoming, (int, float)):
+        delta = incoming
+    else:
+        text = str(incoming).strip()
+        match = re.fullmatch(r"[+-]?\d+", text)
+        if not match:
+            return incoming
+        delta = int(text)
+    return clamp_schema_number(current + delta, field)
 
 
 def merge_dicts(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:

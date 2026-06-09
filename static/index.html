@@ -7,28 +7,299 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main class="shell">
+    <main class="shell" data-view="launcher" data-mobile-view="story">
       <header class="topbar">
-        <div class="brand">
-          <p class="eyebrow">Local Story Engine</p>
-          <div>
-            <h1 id="worldTitle">AI Roleplay Engine</h1>
-            <p id="characterSummary" class="topbar-subtitle">选择世界书和角色卡开始剧情</p>
+        <button id="homeBtn" class="brand brand-button" type="button" aria-label="返回启动首页">
+          <span class="brand-mark">AR</span>
+          <span>
+            <span class="eyebrow">Local Story Engine</span>
+            <strong id="worldTitle">AI Roleplay Engine</strong>
+            <small id="characterSummary" class="topbar-subtitle">选择世界书和角色卡，开始你的下一段故事。</small>
+          </span>
+        </button>
+        <p id="modelStatus" class="model-pill">-</p>
+      </header>
+
+      <section id="launcherView" class="route-view launcher-view" data-route-view="launcher">
+        <div class="launcher-hero">
+          <p class="eyebrow">RPG Launcher</p>
+          <h1>进入你的 AI 角色扮演世界</h1>
+          <p>
+            选择世界书、角色卡和开局方式，让 AI 负责旁白、NPC 与世界事件。
+            启动器只负责准备冒险，真正的剧情会在游戏内界面展开。
+          </p>
+          <div class="launcher-actions">
+            <button id="launcherStartBtn" class="primary-button hero-button" type="button">开始新游戏</button>
+            <button id="launcherSavesBtn" class="nav-button" type="button">继续游戏 / 存档</button>
           </div>
         </div>
 
-        <nav class="topbar-actions" aria-label="主操作">
-          <button id="newGameNavBtn" class="nav-button primary-nav" type="button">新游戏</button>
-          <button id="savesNavBtn" class="nav-button" type="button">存档</button>
-          <button id="characterNavBtn" class="nav-button" type="button">角色卡</button>
-          <button id="worldNavBtn" class="nav-button" type="button">世界书</button>
-          <button id="memoryNavBtn" class="nav-button" type="button">记忆</button>
-          <button id="settingsNavBtn" class="nav-button" type="button">设置</button>
-        </nav>
-      </header>
+        <aside class="launcher-side">
+          <section class="panel model-card">
+            <p class="section-kicker">Model</p>
+            <h2>当前模型状态</h2>
+            <p id="launcherModelStatus" class="compact-text">-</p>
+          </section>
 
-      <section class="main-layout">
+          <section class="panel">
+            <div class="panel-title-row">
+              <h2>最近存档</h2>
+              <button id="launcherAllSavesBtn" class="text-button" type="button">查看全部</button>
+            </div>
+            <div id="recentSaves" class="recent-saves"></div>
+          </section>
+        </aside>
+
+        <nav class="launcher-menu" aria-label="启动器菜单">
+          <button id="launcherCharactersBtn" class="launcher-tile" type="button">
+            <strong>角色卡管理</strong>
+            <span>查看和编辑玩家主角或 NPC 卡。</span>
+          </button>
+          <button id="launcherWorldsBtn" class="launcher-tile" type="button">
+            <strong>世界书管理</strong>
+            <span>维护世界设定、事实条目和开局资源。</span>
+          </button>
+          <button id="launcherSettingsBtn" class="launcher-tile" type="button">
+            <strong>设置</strong>
+            <span>检查当前模型与运行状态。</span>
+          </button>
+        </nav>
+      </section>
+
+      <section id="newGameDrawer" class="route-view page-view new-game-view" data-route-view="newGame" aria-label="开始新游戏">
+        <div class="page-header">
+          <div>
+            <p class="section-kicker">New Game Wizard</p>
+            <h1>开始新游戏</h1>
+            <p>按步骤选择模式、资源和开局方式，确认后再进入游戏内界面。</p>
+          </div>
+          <button class="drawer-close" type="button" data-close-drawer>返回主页</button>
+        </div>
+
+        <div class="wizard-layout">
+          <section class="wizard-steps">
+            <article class="wizard-card">
+              <span class="step-number">01</span>
+              <div>
+                <h2>选择模式</h2>
+                <label class="character-only-toggle">
+                  <input id="characterOnlyMode" type="checkbox" />
+                  <span>
+                    仅角色卡开局
+                    <small>关闭时使用“世界书 + 角色卡”；开启时不加载世界书条目和世界书开场。</small>
+                  </span>
+                </label>
+              </div>
+            </article>
+
+            <article id="worldStep" class="wizard-card">
+              <span class="step-number">02</span>
+              <div>
+                <h2>选择世界书</h2>
+                <label>
+                  世界书
+                  <select id="worldSelect"></select>
+                </label>
+              </div>
+            </article>
+
+            <article class="wizard-card">
+              <span class="step-number">03</span>
+              <div>
+                <h2>选择角色卡</h2>
+                <label>
+                  角色卡
+                  <select id="characterSelect"></select>
+                </label>
+              </div>
+            </article>
+
+            <article class="wizard-card">
+              <span class="step-number">04</span>
+              <div>
+                <h2>选择开局方式</h2>
+                <section class="opening-launcher" aria-label="开局方式">
+                  <div class="opening-mode-grid">
+                    <label class="opening-mode">
+                      <input type="radio" name="openingMode" value="default" checked />
+                      <span>默认开局</span>
+                    </label>
+                    <label class="opening-mode">
+                      <input id="openingModeOption" type="radio" name="openingMode" value="option" />
+                      <span>预设开局</span>
+                    </label>
+                    <label class="opening-mode">
+                      <input type="radio" name="openingMode" value="custom" />
+                      <span>自定义开局</span>
+                    </label>
+                  </div>
+                  <div id="openingOptionsPanel" class="opening-options-panel"></div>
+                  <label id="customOpeningPanel" class="custom-opening-panel">
+                    自定义开局文本
+                    <textarea
+                      id="customOpeningText"
+                      rows="5"
+                      maxlength="1200"
+                      placeholder="例如：从雨夜的火车站开始；我刚收到一封匿名信；同行者是一名不可信的调查员；危险程度中等。"
+                    ></textarea>
+                  </label>
+                </section>
+              </div>
+            </article>
+          </section>
+
+          <aside class="confirm-card">
+            <p class="section-kicker">Confirm</p>
+            <h2>确认并开始</h2>
+            <div id="launchSummary" class="launch-summary compact-text">选择角色卡和世界书后开始。</div>
+            <button id="startGameBtn" class="primary-button hero-button" type="button">开始游戏</button>
+          </aside>
+        </div>
+      </section>
+
+      <section id="savesDrawer" class="route-view page-view" data-route-view="saves" aria-label="存档列表">
+        <div class="page-header">
+          <div>
+            <p class="section-kicker">Archives</p>
+            <h1>继续游戏 / 存档</h1>
+            <p>选择一个存档继续，或删除不再需要的故事。</p>
+          </div>
+          <button class="drawer-close" type="button" data-close-drawer>返回主页</button>
+        </div>
+        <div id="saveList" class="save-list save-page-list"></div>
+      </section>
+
+      <section id="characterDrawer" class="route-view page-view" data-route-view="characters" aria-label="角色卡管理">
+        <div class="page-header">
+          <div>
+            <p class="section-kicker">Character Card</p>
+            <h1>角色卡管理</h1>
+            <p>编辑当前选中的角色卡。角色可以是玩家主角，也可以是 NPC。</p>
+          </div>
+          <button class="drawer-close" type="button" data-close-drawer>返回主页</button>
+        </div>
+        <div class="editor-panel management-panel">
+          <label>
+            名称
+            <input id="characterName" type="text" autocomplete="off" />
+          </label>
+          <label>
+            身份
+            <textarea id="characterRole" rows="3"></textarea>
+          </label>
+          <label>
+            性格
+            <textarea id="characterPersonality" rows="4"></textarea>
+          </label>
+          <label>
+            说话风格
+            <textarea id="characterSpeechStyle" rows="3"></textarea>
+          </label>
+          <label>
+            规则
+            <textarea id="characterRules" rows="6"></textarea>
+          </label>
+          <button id="saveCharacterBtn" class="primary-button" type="button">保存角色卡</button>
+        </div>
+      </section>
+
+      <section id="worldDrawer" class="route-view page-view" data-route-view="worlds" aria-label="世界书管理">
+        <div class="page-header">
+          <div>
+            <p class="section-kicker">World Book</p>
+            <h1>世界书管理</h1>
+            <p>编辑当前选中的世界书摘要和事实条目。</p>
+          </div>
+          <button class="drawer-close" type="button" data-close-drawer>返回主页</button>
+        </div>
+        <div class="editor-panel management-panel">
+          <label>
+            标题
+            <input id="worldBookTitle" type="text" autocomplete="off" />
+          </label>
+          <label>
+            前提
+            <textarea id="worldPremise" rows="5"></textarea>
+          </label>
+          <label>
+            基调
+            <textarea id="worldTone" rows="3"></textarea>
+          </label>
+          <label>
+            事实条目
+            <textarea id="worldFacts" rows="8"></textarea>
+          </label>
+          <button id="saveWorldBtn" class="primary-button" type="button">保存世界书</button>
+        </div>
+      </section>
+
+      <section id="memoryDrawer" class="route-view page-view" data-route-view="memory" aria-label="长期记忆">
+        <div class="page-header">
+          <div>
+            <p class="section-kicker">Long Memory</p>
+            <h1>长期记忆</h1>
+            <p>这里保存当前会话摘要，只在进入游戏后编辑当前存档。</p>
+          </div>
+          <button class="drawer-close" type="button" data-close-drawer>返回主页</button>
+        </div>
+        <div class="editor-panel management-panel">
+          <label>
+            剧情摘要
+            <textarea id="sessionSummary" rows="16"></textarea>
+          </label>
+          <button id="saveMemoryBtn" class="primary-button" type="button">保存长期记忆</button>
+        </div>
+      </section>
+
+      <section id="settingsDrawer" class="route-view page-view" data-route-view="settings" aria-label="设置">
+        <div class="page-header">
+          <div>
+            <p class="section-kicker">Settings</p>
+            <h1>设置</h1>
+            <p>检查当前模型和运行状态。</p>
+          </div>
+          <button class="drawer-close" type="button" data-close-drawer>返回主页</button>
+        </div>
+        <section class="panel management-panel">
+          <h2>当前模型</h2>
+          <p id="drawerModelStatus" class="compact-text">-</p>
+        </section>
+      </section>
+
+      <section id="gameView" class="main-layout route-view game-view" data-route-view="game" aria-label="游戏内界面">
+        <nav class="app-nav" aria-label="游戏菜单">
+          <button id="homeFromGameBtn" class="nav-button" type="button">
+            <span>返回主页</span>
+          </button>
+          <button id="newGameNavBtn" class="nav-button primary-nav" type="button">
+            <span>新游戏</span>
+          </button>
+          <button id="savesNavBtn" class="nav-button" type="button">
+            <span>存档</span>
+          </button>
+          <button id="characterNavBtn" class="nav-button" type="button">
+            <span>角色卡</span>
+          </button>
+          <button id="worldNavBtn" class="nav-button" type="button">
+            <span>世界书</span>
+          </button>
+          <button id="memoryNavBtn" class="nav-button" type="button">
+            <span>记忆</span>
+          </button>
+          <button id="settingsNavBtn" class="nav-button" type="button">
+            <span>设置</span>
+          </button>
+        </nav>
+
         <aside class="status-rail">
+          <div class="inspector-header">
+            <div>
+              <p class="section-kicker">Inspector</p>
+              <h2>状态面板</h2>
+            </div>
+            <span class="status-badge">Live</span>
+          </div>
+
           <section class="panel goal-panel">
             <p class="section-kicker">当前目标</p>
             <p id="stateGoal" class="goal-text">-</p>
@@ -119,11 +390,6 @@
             <h2>目标</h2>
             <div id="objectives" class="chips"></div>
           </section>
-
-          <section class="panel">
-            <h2>模型</h2>
-            <p id="modelStatus" class="compact-text">-</p>
-          </section>
         </aside>
 
         <section class="play">
@@ -160,138 +426,15 @@
           </section>
         </section>
       </section>
+
+      <nav class="mobile-tabs" aria-label="移动端分区">
+        <button id="mobileStoryTab" class="mobile-tab active" type="button" data-mobile-view="story">剧情</button>
+        <button id="mobileStateTab" class="mobile-tab" type="button" data-mobile-view="state">状态</button>
+        <button id="mobileMenuTab" class="mobile-tab" type="button" data-mobile-view="menu">菜单</button>
+      </nav>
+
+      <div id="drawerOverlay" class="drawer-overlay" hidden></div>
     </main>
-
-    <div id="drawerOverlay" class="drawer-overlay" hidden></div>
-
-    <aside id="newGameDrawer" class="drawer" aria-hidden="true">
-      <div class="drawer-header">
-        <div>
-          <p class="section-kicker">New Session</p>
-          <h2>开始新游戏</h2>
-        </div>
-        <button class="drawer-close" type="button" data-close-drawer>关闭</button>
-      </div>
-      <div class="drawer-body launcher-panel">
-        <label>
-          世界书
-          <select id="worldSelect"></select>
-        </label>
-        <label>
-          角色卡
-          <select id="characterSelect"></select>
-        </label>
-        <button id="startGameBtn" class="primary-button" type="button">开始新游戏</button>
-      </div>
-    </aside>
-
-    <aside id="savesDrawer" class="drawer" aria-hidden="true">
-      <div class="drawer-header">
-        <div>
-          <p class="section-kicker">Archives</p>
-          <h2>存档</h2>
-        </div>
-        <button class="drawer-close" type="button" data-close-drawer>关闭</button>
-      </div>
-      <div class="drawer-body">
-        <div id="saveList" class="save-list"></div>
-      </div>
-    </aside>
-
-    <aside id="characterDrawer" class="drawer" aria-hidden="true">
-      <div class="drawer-header">
-        <div>
-          <p class="section-kicker">Character Card</p>
-          <h2>角色卡</h2>
-        </div>
-        <button class="drawer-close" type="button" data-close-drawer>关闭</button>
-      </div>
-      <div class="drawer-body editor-panel">
-        <label>
-          名称
-          <input id="characterName" type="text" autocomplete="off" />
-        </label>
-        <label>
-          身份
-          <textarea id="characterRole" rows="3"></textarea>
-        </label>
-        <label>
-          性格
-          <textarea id="characterPersonality" rows="4"></textarea>
-        </label>
-        <label>
-          说话风格
-          <textarea id="characterSpeechStyle" rows="3"></textarea>
-        </label>
-        <label>
-          规则
-          <textarea id="characterRules" rows="6"></textarea>
-        </label>
-        <button id="saveCharacterBtn" class="primary-button" type="button">保存角色卡</button>
-      </div>
-    </aside>
-
-    <aside id="worldDrawer" class="drawer" aria-hidden="true">
-      <div class="drawer-header">
-        <div>
-          <p class="section-kicker">World Book</p>
-          <h2>世界书</h2>
-        </div>
-        <button class="drawer-close" type="button" data-close-drawer>关闭</button>
-      </div>
-      <div class="drawer-body editor-panel">
-        <label>
-          标题
-          <input id="worldBookTitle" type="text" autocomplete="off" />
-        </label>
-        <label>
-          前提
-          <textarea id="worldPremise" rows="5"></textarea>
-        </label>
-        <label>
-          基调
-          <textarea id="worldTone" rows="3"></textarea>
-        </label>
-        <label>
-          事实条目
-          <textarea id="worldFacts" rows="8"></textarea>
-        </label>
-        <button id="saveWorldBtn" class="primary-button" type="button">保存世界书</button>
-      </div>
-    </aside>
-
-    <aside id="memoryDrawer" class="drawer" aria-hidden="true">
-      <div class="drawer-header">
-        <div>
-          <p class="section-kicker">Long Memory</p>
-          <h2>长期记忆</h2>
-        </div>
-        <button class="drawer-close" type="button" data-close-drawer>关闭</button>
-      </div>
-      <div class="drawer-body editor-panel">
-        <label>
-          剧情摘要
-          <textarea id="sessionSummary" rows="16"></textarea>
-        </label>
-        <button id="saveMemoryBtn" class="primary-button" type="button">保存长期记忆</button>
-      </div>
-    </aside>
-
-    <aside id="settingsDrawer" class="drawer" aria-hidden="true">
-      <div class="drawer-header">
-        <div>
-          <p class="section-kicker">Settings</p>
-          <h2>设置</h2>
-        </div>
-        <button class="drawer-close" type="button" data-close-drawer>关闭</button>
-      </div>
-      <div class="drawer-body">
-        <section class="panel">
-          <h2>当前模型</h2>
-          <p id="drawerModelStatus" class="compact-text">-</p>
-        </section>
-      </div>
-    </aside>
 
     <script src="/app.js"></script>
   </body>

@@ -108,7 +108,24 @@ def compact_world_for_prompt(world: dict[str, Any]) -> dict[str, Any]:
         "tone": world.get("tone"),
         "factsPreview": [truncate_text(fact, 700) for fact in (world.get("facts") or [])[:3]],
         "uiSchema": world.get("uiSchema") if isinstance(world.get("uiSchema"), dict) else {},
+        "initialState": world.get("initialState") if isinstance(world.get("initialState"), dict) else {},
+        "openingScene": truncate_text(world.get("openingScene"), 1200),
     }
+
+
+def describe_character_mode(character: dict[str, Any]) -> str:
+    card_type = str(character.get("cardType") or "npc").strip().lower()
+    name = str(character.get("name") or "当前角色")
+    if card_type == "player":
+        return (
+            f"角色卡模式：主角型。用户扮演{name}。AI 不扮演{name}，"
+            "只负责旁白、环境、NPC、敌人、世界事件和行动反馈。"
+            f"不要替{name}说话、思考或做决定。"
+        )
+    return (
+        f"角色卡模式：NPC 型。AI 可以扮演{name}，并保持该角色卡的人设、"
+        "说话方式和行动边界。用户不是该角色，除非用户明确说明。"
+    )
 
 
 def describe_ui_schema(ui_schema: Any) -> str:
@@ -129,9 +146,10 @@ def describe_ui_schema(ui_schema: Any) -> str:
                 continue
             label = field.get("label") or key
             field_type = field.get("type") or "text"
+            update_policy = field.get("updatePolicy") or field.get("merge") or "replace"
             aliases = field.get("aliases") if isinstance(field.get("aliases"), list) else []
             alias_text = f"，别名：{', '.join(str(alias) for alias in aliases)}" if aliases else ""
-            lines.append(f"  - {key}（{label}，{field_type}{alias_text}）")
+            lines.append(f"  - {key}（{label}，{field_type}，更新策略：{update_policy}{alias_text}）")
     return "\n".join(lines)
 
 
@@ -194,6 +212,7 @@ def build_prompt(session: dict[str, Any], user_text: str, config: Any | None = N
     action_guidance = "\n".join(f"- {hint}" for hint in action_hints) or "- 无特殊提醒。"
     ui_schema = session["world"].get("uiSchema") if isinstance(session["world"].get("uiSchema"), dict) else {}
     ui_schema_guidance = describe_ui_schema(ui_schema)
+    character_mode_guidance = describe_character_mode(session["character"])
     prompt_payload = {
         "userAction": user_text,
         "actionHints": action_hints,
@@ -203,6 +222,7 @@ def build_prompt(session: dict[str, Any], user_text: str, config: Any | None = N
         "recentMessages": recent_messages,
         "selectedWorldEntries": selected_world_entries,
         "character": session["character"],
+        "characterMode": session["character"].get("cardType", "npc"),
         "world": compact_world_for_prompt(session["world"]),
     }
     prompt = f"""
@@ -230,6 +250,9 @@ def build_prompt(session: dict[str, Any], user_text: str, config: Any | None = N
 
 本轮连续性提醒：
 {action_guidance}
+
+角色卡模式：
+{character_mode_guidance}
 
 状态 UI schema：
 {ui_schema_guidance}

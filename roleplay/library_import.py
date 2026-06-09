@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import sqlite3
 import struct
 import uuid
@@ -64,6 +65,48 @@ def normalize_entry_keys(value: Any) -> list[str]:
     if isinstance(value, str):
         return [item.strip() for item in value.split(",") if item.strip()]
     return []
+
+
+def split_lines(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [line.strip() for line in str(value or "").splitlines() if line.strip()]
+
+
+def normalize_opening_options(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+
+    options = []
+    seen_ids: set[str] = set()
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        prompt = str(item.get("prompt") or "").strip()
+        if not title or not prompt:
+            continue
+        option_id = str(item.get("id") or "").strip() or slugify_opening_id(title, index)
+        if option_id in seen_ids:
+            option_id = f"{option_id}-{index + 1}"
+        seen_ids.add(option_id)
+        patch = item.get("initialStatePatch")
+        options.append(
+            {
+                "id": option_id,
+                "title": title,
+                "description": str(item.get("description") or "").strip(),
+                "prompt": prompt,
+                "initialStatePatch": patch if isinstance(patch, dict) else {},
+                "tags": split_lines(item.get("tags")),
+            }
+        )
+    return options
+
+
+def slugify_opening_id(title: str, index: int) -> str:
+    ascii_slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    return ascii_slug or f"opening-{index + 1}"
 
 
 def read_character_json(path: Path) -> dict[str, Any] | None:
@@ -141,6 +184,13 @@ def normalize_character_payload(data: dict[str, Any], fallback_name: str) -> dic
     examples = str(card.get("mes_example") or "").strip()
     creator_notes = str(card.get("creator_notes") or "").strip()
     tags = card.get("tags") if isinstance(card.get("tags"), list) else data.get("tags")
+    card_type = normalize_card_type(
+        card.get("cardType")
+        or card.get("card_type")
+        or data.get("cardType")
+        or data.get("card_type")
+        or infer_card_type(description, personality, scenario, creator_notes)
+    )
 
     rules = []
     for label, value in [
@@ -163,10 +213,36 @@ def normalize_character_payload(data: dict[str, Any], fallback_name: str) -> dic
             "exampleDialogue": examples,
             "creatorNotes": creator_notes,
             "tags": [str(tag).strip() for tag in tags if str(tag).strip()] if isinstance(tags, list) else [],
+            "cardType": card_type,
             "rules": rules,
         },
         fallback_name,
     )
+
+
+def normalize_card_type(value: Any) -> str:
+    card_type = str(value or "").strip().lower()
+    if card_type in {"player", "protagonist", "pc", "user"}:
+        return "player"
+    if card_type in {"npc", "character", "assistant", "ai"}:
+        return "npc"
+    return "npc"
+
+
+def infer_card_type(*values: str) -> str:
+    text = "\n".join(str(value or "") for value in values)
+    player_markers = [
+        "用户扮演",
+        "用户就是",
+        "用户可以代入",
+        "用户可以扮演",
+        "AI 不扮演",
+        "AI只负责",
+        "AI 只负责",
+        "user plays",
+        "player character",
+    ]
+    return "player" if any(marker.lower() in text.lower() for marker in player_markers) else "npc"
 
 
 def localize_known_character(card: dict[str, Any], fallback_name: str) -> dict[str, Any]:
@@ -254,6 +330,9 @@ def read_world_book_json(path: Path) -> dict[str, Any] | None:
         "facts": facts,
         "entries": normalized_entries,
         "uiSchema": data.get("uiSchema") if isinstance(data.get("uiSchema"), dict) else {},
+        "initialState": data.get("initialState") if isinstance(data.get("initialState"), dict) else {},
+        "openingScene": str(data.get("openingScene") or "").strip(),
+        "openingOptions": normalize_opening_options(data.get("openingOptions")),
     })
 
 
@@ -264,9 +343,9 @@ def upsert_character(conn: sqlite3.Connection, path: Path, card: dict[str, Any])
         """
         INSERT INTO character_cards (
             id, name, role, personality, speech_style, scenario, first_message,
-            example_dialogue, creator_notes, tags_json, rules_json, created_at, updated_at
+            example_dialogue, creator_notes, tags_json, card_type, rules_json, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             name = excluded.name,
             role = excluded.role,
@@ -277,6 +356,7 @@ def upsert_character(conn: sqlite3.Connection, path: Path, card: dict[str, Any])
             example_dialogue = excluded.example_dialogue,
             creator_notes = excluded.creator_notes,
             tags_json = excluded.tags_json,
+            card_type = excluded.card_type,
             rules_json = excluded.rules_json,
             updated_at = excluded.updated_at
         """,
@@ -291,6 +371,7 @@ def upsert_character(conn: sqlite3.Connection, path: Path, card: dict[str, Any])
             card.get("exampleDialogue", ""),
             card.get("creatorNotes", ""),
             json.dumps(card.get("tags", []), ensure_ascii=False),
+            normalize_card_type(card.get("cardType")),
             json.dumps(card["rules"], ensure_ascii=False),
             timestamp,
             timestamp,
@@ -304,15 +385,19 @@ def upsert_world(conn: sqlite3.Connection, path: Path, world: dict[str, Any]) ->
     conn.execute(
         """
         INSERT INTO world_books (
-            id, title, premise, tone, facts_json, ui_schema_json, created_at, updated_at
+            id, title, premise, tone, facts_json, ui_schema_json,
+            initial_state_json, opening_scene, opening_options_json, created_at, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             title = excluded.title,
             premise = excluded.premise,
             tone = excluded.tone,
             facts_json = excluded.facts_json,
             ui_schema_json = excluded.ui_schema_json,
+            initial_state_json = excluded.initial_state_json,
+            opening_scene = excluded.opening_scene,
+            opening_options_json = excluded.opening_options_json,
             updated_at = excluded.updated_at
         """,
         (
@@ -322,6 +407,9 @@ def upsert_world(conn: sqlite3.Connection, path: Path, world: dict[str, Any]) ->
             world["tone"],
             json.dumps(world["facts"], ensure_ascii=False),
             json.dumps(world.get("uiSchema", {}), ensure_ascii=False),
+            json.dumps(world.get("initialState", {}), ensure_ascii=False),
+            str(world.get("openingScene") or ""),
+            json.dumps(normalize_opening_options(world.get("openingOptions")), ensure_ascii=False),
             timestamp,
             timestamp,
         ),
